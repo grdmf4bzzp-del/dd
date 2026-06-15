@@ -1,0 +1,403 @@
+```react
+import React, { useState, useEffect } from 'react';
+import { 
+  CheckCircle2, 
+  Circle, 
+  Plus, 
+  Trash2, 
+  Sun, 
+  Target,
+  BookOpen,
+  Calendar,
+  Save,
+  Loader2
+} from 'lucide-react';
+import { initializeApp } from 'firebase/app';
+import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from 'firebase/auth';
+import { getFirestore, doc, setDoc, onSnapshot } from 'firebase/firestore';
+
+// Initialize Firebase
+const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+
+export default function App() {
+  const [user, setUser] = useState(null);
+  const [isSaving, setIsSaving] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+
+  // States for App Data
+  const [tasks, setTasks] = useState([]);
+  const [newTaskText, setNewTaskText] = useState('');
+
+  const [habits, setHabits] = useState([]);
+  const [newHabitText, setNewHabitText] = useState('');
+
+  const [notes, setNotes] = useState('');
+  const [dailyFocus, setDailyFocus] = useState('');
+
+  const [greeting, setGreeting] = useState('');
+  const [currentDate, setCurrentDate] = useState('');
+
+  // Authentication Setup
+  useEffect(() => {
+    const initAuth = async () => {
+      try {
+        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+          await signInWithCustomToken(auth, __initial_auth_token);
+        } else {
+          await signInAnonymously(auth);
+        }
+      } catch (error) {
+        console.error("Auth error:", error);
+      }
+    };
+    initAuth();
+
+    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+      setUser(currentUser);
+      if (!currentUser) setIsLoading(false);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // Data Fetching from Firestore
+  useEffect(() => {
+    if (!user) return;
+
+    setIsLoading(true);
+    const today = new Date().toISOString().split('T')[0]; // Format: YYYY-MM-DD
+    const docRef = doc(db, 'artifacts', appId, 'users', user.uid, 'daily_data', today);
+
+    const unsubscribe = onSnapshot(
+      docRef,
+      (docSnap) => {
+        if (docSnap.exists()) {
+          const data = docSnap.data();
+          setTasks(data.tasks || []);
+          setHabits(data.habits || []);
+          setNotes(data.notes || '');
+          setDailyFocus(data.dailyFocus || '');
+        } else {
+          // Defaults for a new day
+          setTasks([]);
+          setHabits([
+             { id: 1, text: 'شرب ماء', completed: false },
+             { id: 2, text: 'قراءة', completed: false }
+          ]);
+          setNotes('');
+          setDailyFocus('');
+        }
+        setIsLoading(false);
+      },
+      (error) => {
+        console.error("Firestore error:", error);
+        setIsLoading(false);
+      }
+    );
+
+    return () => unsubscribe();
+  }, [user]);
+
+  // Setup Date and Greeting
+  useEffect(() => {
+    const hour = new Date().getHours();
+    if (hour < 12) setGreeting('صباح الخير ☀️');
+    else if (hour < 18) setGreeting('طاب مساؤك 🌤️');
+    else setGreeting('مساء الخير 🌙');
+
+    const options = { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' };
+    setCurrentDate(new Date().toLocaleDateString('ar-EG', options));
+  }, []);
+
+  // Save Function
+  const saveToCloud = async (newData) => {
+    if (!user) return;
+    setIsSaving(true);
+    const today = new Date().toISOString().split('T')[0];
+    const docRef = doc(db, 'artifacts', appId, 'users', user.uid, 'daily_data', today);
+    
+    try {
+      await setDoc(docRef, {
+        tasks: newData.tasks !== undefined ? newData.tasks : tasks,
+        habits: newData.habits !== undefined ? newData.habits : habits,
+        notes: newData.notes !== undefined ? newData.notes : notes,
+        dailyFocus: newData.dailyFocus !== undefined ? newData.dailyFocus : dailyFocus,
+        lastUpdated: new Date().toISOString()
+      }, { merge: true });
+    } catch (error) {
+      console.error("Error saving:", error);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  // Task Handlers
+  const addTask = (e) => {
+    e.preventDefault();
+    if (!newTaskText.trim()) return;
+    const updatedTasks = [{ id: Date.now(), text: newTaskText, completed: false }, ...tasks];
+    setTasks(updatedTasks);
+    setNewTaskText('');
+    saveToCloud({ tasks: updatedTasks });
+  };
+
+  const toggleTask = (id) => {
+    const updatedTasks = tasks.map(task => 
+      task.id === id ? { ...task, completed: !task.completed } : task
+    );
+    setTasks(updatedTasks);
+    saveToCloud({ tasks: updatedTasks });
+  };
+
+  const deleteTask = (id) => {
+    const updatedTasks = tasks.filter(task => task.id !== id);
+    setTasks(updatedTasks);
+    saveToCloud({ tasks: updatedTasks });
+  };
+
+  // Habit Handlers
+  const addHabit = (e) => {
+    e.preventDefault();
+    if (!newHabitText.trim()) return;
+    const updatedHabits = [...habits, { id: Date.now(), text: newHabitText, completed: false }];
+    setHabits(updatedHabits);
+    setNewHabitText('');
+    saveToCloud({ habits: updatedHabits });
+  };
+
+  const toggleHabit = (id) => {
+    const updatedHabits = habits.map(habit => 
+      habit.id === id ? { ...habit, completed: !habit.completed } : habit
+    );
+    setHabits(updatedHabits);
+    saveToCloud({ habits: updatedHabits });
+  };
+
+  const deleteHabit = (id) => {
+    const updatedHabits = habits.filter(habit => habit.id !== id);
+    setHabits(updatedHabits);
+    saveToCloud({ habits: updatedHabits });
+  };
+
+  // Notes and Focus Handlers (Debounced save for better performance could be added, but direct save on blur works for simple apps)
+  const handleNotesChange = (e) => {
+    setNotes(e.target.value);
+  };
+  const handleNotesBlur = () => {
+    saveToCloud({ notes });
+  };
+
+  const handleFocusChange = (e) => {
+    setDailyFocus(e.target.value);
+  };
+  const handleFocusBlur = () => {
+    saveToCloud({ dailyFocus });
+  };
+
+  // Calculate Progress
+  const completedHabits = habits.filter(h => h.completed).length;
+  const habitProgress = habits.length === 0 ? 0 : Math.round((completedHabits / habits.length) * 100);
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center" dir="rtl">
+        <div className="flex flex-col items-center gap-4 text-indigo-600">
+          <Loader2 className="animate-spin w-8 h-8" />
+          <p className="font-semibold text-lg">جاري تحميل يومك...</p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div dir="rtl" className="min-h-screen bg-slate-50 text-slate-800 font-sans p-4 md:p-8">
+      <div className="max-w-6xl mx-auto space-y-6">
+        
+        {/* Header Section */}
+        <header className="bg-white rounded-2xl p-6 shadow-sm border border-slate-100 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+          <div>
+            <div className="flex items-center gap-3">
+              <h1 className="text-3xl font-bold text-indigo-900 mb-1">{greeting}</h1>
+              {isSaving && <Save className="w-5 h-5 text-slate-400 animate-pulse" />}
+            </div>
+            <div className="flex items-center text-slate-500 gap-2">
+              <Calendar size={18} />
+              <span>{currentDate}</span>
+            </div>
+          </div>
+          
+          <div className="w-full md:w-1/3 bg-indigo-50 p-4 rounded-xl border border-indigo-100">
+            <div className="flex items-center gap-2 mb-2 text-indigo-700 font-semibold">
+              <Target size={20} />
+              <span>الهدف الأساسي لليوم</span>
+            </div>
+            <input 
+              type="text" 
+              value={dailyFocus}
+              onChange={handleFocusChange}
+              onBlur={handleFocusBlur}
+              placeholder="ما هو هدفك الأهم اليوم؟"
+              className="w-full bg-transparent border-b border-indigo-200 focus:border-indigo-500 outline-none transition-colors py-1 text-slate-700 placeholder-indigo-300"
+            />
+          </div>
+        </header>
+
+        {/* Main Content Grid */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          
+          {/* Tasks Column */}
+          <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-100 flex flex-col h-[500px]">
+            <h2 className="text-xl font-bold text-slate-800 mb-4 flex items-center gap-2">
+              <CheckCircle2 className="text-blue-500" />
+              المهام اليومية
+            </h2>
+            
+            <form onSubmit={addTask} className="mb-4 relative">
+              <input
+                type="text"
+                value={newTaskText}
+                onChange={(e) => setNewTaskText(e.target.value)}
+                placeholder="أضف مهمة جديدة..."
+                className="w-full bg-slate-50 border border-slate-200 rounded-xl py-3 pr-4 pl-12 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+              />
+              <button 
+                type="submit"
+                disabled={!newTaskText.trim() || isSaving}
+                className="absolute left-2 top-1/2 -translate-y-1/2 bg-blue-500 text-white p-1.5 rounded-lg hover:bg-blue-600 transition-colors disabled:opacity-50"
+              >
+                <Plus size={20} />
+              </button>
+            </form>
+
+            <div className="overflow-y-auto flex-1 pr-2 space-y-2">
+              {tasks.length === 0 ? (
+                <p className="text-center text-slate-400 mt-10">لا توجد مهام حالياً. استمتع بيومك!</p>
+              ) : (
+                tasks.map(task => (
+                  <div 
+                    key={task.id} 
+                    className={`flex items-center justify-between p-3 rounded-xl border transition-all ${
+                      task.completed ? 'bg-slate-50 border-transparent' : 'bg-white border-slate-100 shadow-sm hover:border-blue-200'
+                    }`}
+                  >
+                    <button 
+                      onClick={() => toggleTask(task.id)}
+                      className="flex items-center gap-3 flex-1 text-right"
+                    >
+                      {task.completed ? (
+                        <CheckCircle2 className="text-emerald-500 flex-shrink-0" size={22} />
+                      ) : (
+                        <Circle className="text-slate-300 flex-shrink-0" size={22} />
+                      )}
+                      <span className={`transition-all ${task.completed ? 'line-through text-slate-400' : 'text-slate-700'}`}>
+                        {task.text}
+                      </span>
+                    </button>
+                    <button 
+                      onClick={() => deleteTask(task.id)}
+                      className="text-slate-300 hover:text-red-500 p-2 transition-colors"
+                    >
+                      <Trash2 size={18} />
+                    </button>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+
+          {/* Habits Column */}
+          <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-100 flex flex-col h-[500px]">
+            <div className="flex justify-between items-center mb-4">
+              <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
+                <Sun className="text-amber-500" />
+                تتبع العادات
+              </h2>
+              <span className="text-sm font-semibold text-emerald-600 bg-emerald-50 px-2 py-1 rounded-lg">
+                {habitProgress}% منجز
+              </span>
+            </div>
+
+            {/* Progress Bar */}
+            <div className="w-full bg-slate-100 rounded-full h-2.5 mb-6">
+              <div 
+                className="bg-emerald-500 h-2.5 rounded-full transition-all duration-500 ease-out" 
+                style={{ width: `${habitProgress}%` }}
+              ></div>
+            </div>
+
+            <form onSubmit={addHabit} className="mb-4 relative">
+              <input
+                type="text"
+                value={newHabitText}
+                onChange={(e) => setNewHabitText(e.target.value)}
+                placeholder="أضف عادة جديدة..."
+                className="w-full bg-slate-50 border border-slate-200 rounded-xl py-3 pr-4 pl-12 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent transition-all"
+              />
+              <button 
+                type="submit"
+                disabled={!newHabitText.trim() || isSaving}
+                className="absolute left-2 top-1/2 -translate-y-1/2 bg-emerald-500 text-white p-1.5 rounded-lg hover:bg-emerald-600 transition-colors disabled:opacity-50"
+              >
+                <Plus size={20} />
+              </button>
+            </form>
+
+            <div className="overflow-y-auto flex-1 pr-2 space-y-3">
+              {habits.map(habit => (
+                <div 
+                  key={habit.id}
+                  className="group relative flex items-center p-1"
+                >
+                  <button 
+                    onClick={() => toggleHabit(habit.id)}
+                    className={`w-full flex items-center justify-between p-4 rounded-xl border-2 transition-all ${
+                      habit.completed 
+                        ? 'border-emerald-500 bg-emerald-50' 
+                        : 'border-slate-200 bg-white hover:border-emerald-200'
+                    }`}
+                  >
+                    <span className={`font-medium ${habit.completed ? 'text-emerald-700' : 'text-slate-700'}`}>
+                      {habit.text}
+                    </span>
+                    <div className={`w-6 h-6 rounded-md flex items-center justify-center border-2 transition-colors ${
+                      habit.completed ? 'bg-emerald-500 border-emerald-500' : 'border-slate-300'
+                    }`}>
+                      {habit.completed && <CheckCircle2 className="text-white" size={16} />}
+                    </div>
+                  </button>
+                  <button 
+                    onClick={() => deleteHabit(habit.id)}
+                    className="absolute -left-2 bg-red-100 text-red-600 p-2 rounded-full opacity-0 group-hover:opacity-100 transition-opacity shadow-sm hover:bg-red-200"
+                  >
+                    <Trash2 size={16} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Notes Column */}
+          <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-100 flex flex-col h-[500px]">
+            <h2 className="text-xl font-bold text-slate-800 mb-4 flex items-center gap-2">
+              <BookOpen className="text-purple-500" />
+              ملاحظات سريعة
+            </h2>
+            <textarea
+              value={notes}
+              onChange={handleNotesChange}
+              onBlur={handleNotesBlur}
+              placeholder="اكتب أفكارك، إلهاماتك، أو أي شيء تريد تذكره هنا... (يتم الحفظ عند النقر خارج المربع)"
+              className="w-full flex-1 bg-slate-50 border border-slate-200 rounded-xl p-4 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent transition-all resize-none leading-relaxed text-slate-700"
+            ></textarea>
+          </div>
+
+        </div>
+      </div>
+    </div>
+  );
+}
+
+```
